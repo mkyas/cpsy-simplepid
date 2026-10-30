@@ -21,17 +21,19 @@ class simplepid
 	public:
 		simplepid() = delete;
 		~simplepid() = default;
-		simplepid(const T& _Kp, const T& _Ki, const T& _Kd);
+		simplepid(const T& _Kp, const T& _Ki, const T& _Kd, const T& _initial = 0);
 		simplepid(const simplepid&) = delete;
 		simplepid& operator=(const simplepid&) = delete;
 		simplepid(simplepid&&) = delete;
 		simplepid& operator=(const simplepid&&) = delete;
 
 		void set_parameters(const T& _Kp, const T& _Ki, const T& _Kd) noexcept;
-		void set_output_range(const T&, const T&) noexcept;
+		void set_output_limits(const T&, const T&) noexcept;
 		void set_setpoint(const T&) noexcept;
+		inline T get_setpoint(void) const noexcept { return setpoint; }
 		void reset(void) noexcept;
 
+		inline T operator()(const T& actual, const T &dt) noexcept;
 		inline T operator()(const T& actual, const std::chrono::time_point<std::chrono::steady_clock> &now) noexcept;
 		inline T operator()(const T& input) noexcept;
 
@@ -53,10 +55,10 @@ class simplepid
  * Constructor.
  */
 template <typename T>
-simplepid<T>::simplepid(const T& _Kp, const T& _Ki, const T& _Kd) :
+simplepid<T>::simplepid(const T& _Kp, const T& _Ki, const T& _Kd, const T& _initial) :
 	Kp{_Kp}, Ki{_Ki}, Kd{_Kd}, setpoint{},
 	min_output{std::numeric_limits<T>::min()}, max_output{std::numeric_limits<T>::max()},
-	last_input{}, integral{}, last_time{std::chrono::steady_clock::now()}
+	last_input{_initial}, integral{}, last_time{std::chrono::steady_clock::now()}
 {
 	// Do nothing.
 }
@@ -79,7 +81,7 @@ void simplepid<T>::set_parameters(const T& _Kp, const T& _Ki, const T& _Kd) noex
  * Set the output range.
  */
 template <typename T>
-void simplepid<T>::set_output_range(const T& _min, const T& _max) noexcept
+void simplepid<T>::set_output_limits(const T& _min, const T& _max) noexcept
 {
 	min_output = _min;
 	max_output = _max;
@@ -110,23 +112,35 @@ void simplepid<T>::reset(void) noexcept
  * update the controller state.
  */
 template<typename T>
-inline T simplepid<T>::operator()(const T& input, const std::chrono::time_point<std::chrono::steady_clock> &now) noexcept
+inline T simplepid<T>::operator()(const T& input, const T &dt) noexcept
 {
-	const std::chrono::duration<T> &dt = now - last_time; // Duration is in seconds.
-	last_time = now;
-
 	const T error = setpoint - input;
-	const T new_integral = integral + Ki * error * dt.count();
-	const T d_error = (last_input - input) / dt.count();
+	const T new_integral = integral + Ki * error * dt;
+	const T d_input = (last_input - input) / dt;
 
-	const T output = Kp * error + new_integral + Kd * d_error;
+	const T output = Kp * error + new_integral + Kd * d_input;
+
+	integral = std::clamp(new_integral, min_output, max_output);
+	last_input = input;
 
 	if (__builtin_expect(output <= min_output, false))
 		return min_output;
 	if (__builtin_expect(output >= max_output, false))
 		return max_output;
-	integral = std::clamp(new_integral, min_output, max_output);
 	return output;
+}
+
+
+/*
+ * update the controller state.
+ */
+template<typename T>
+inline T simplepid<T>::operator()(const T& input, const std::chrono::time_point<std::chrono::steady_clock> &now) noexcept
+{
+	const std::chrono::duration<T> &dt = now - last_time; // Duration is in seconds.
+	last_time = now;
+
+	return operator()(input, dt.count());
 }
 
 
